@@ -13,3 +13,7 @@ class UnexpectedResponseException(Exception):
 
     def __str__(self) -> str:
         return super().__str__()
+
+
+class LoginFailedException(Exception):
+    pass

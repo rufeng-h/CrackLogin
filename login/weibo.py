@@ -15,8 +15,8 @@ from pathlib import Path
 from scrapy import Selector
 
 import utils
-from core import Login, NodeServer
-from exceptions import UnexpectedResponseException
+from core import Login, NodeEncryptor, headers, PROJECT_DIR
+from exceptions import UnexpectedResponseException, LoginFailedException
 from manager import SessionManager
 
 
@@ -70,38 +70,20 @@ class WeiboLogin(Login, metaclass=ABCMeta):
         self.session.cookies.set("SUBP", subp, domain=".weibo.com")
 
     def _initialize_http(self):
-        headers = {
-            'Accept': '*/*',
-            'Accept-Encoding': 'gzip, deflate, br',
-            'Accept-Language': 'zh-CN,zh;q=0.9',
-            'Cache-Control': 'no-cache',
-            'Connection': 'keep-alive',
-            'Pragma': 'no-cache',
-            'sec-ch-ua': '"Google Chrome";v="95", "Chromium";v="95", ";Not A Brand";v="99"',
-            'sec-ch-ua-mobile': '?0',
-            'sec-ch-ua-platform': '"Windows"',
-            'Sec-Fetch-Dest': 'script',
-            'Sec-Fetch-Mode': 'no-cors',
-            'Sec-Fetch-Site': 'cross-site',
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) '
-                          'Chrome/95.0.4638.69 Safari/537.36',
-        }
         self.session.headers.update(headers)
         self._test_login_url = "https://security.weibo.com/account/security"
 
 
-class WeiboLoginVerifyCode(WeiboLogin):
+class WeiboLoginVerifyCode(WeiboLogin, NodeEncryptor):
+    _js_file_path = PROJECT_DIR.joinpath(Path(os.sep.join(("js", "weibo", "weibo_pc.js"))))
 
-    def __init__(self, phone, password, node_exec_path: str = None, node_server_port: int = 8000,
+    def __init__(self, username, password, node_exec_path: str = None, node_server_port: int = 8000,
                  session_manager: SessionManager = None,
                  log_level=logging.INFO, **kwargs):
-        super().__init__(session_manager=session_manager, log_level=log_level, **kwargs)
+        super(WeiboLoginVerifyCode, self).__init__(log_level=log_level, session_manager=session_manager, **kwargs)
 
-        # TODO 提取到父类
-        js_file = str(Path(__file__).parent.parent.joinpath("js").joinpath("weibo_pc.js"))
-        self._node_server = NodeServer(js_file, node_exec_path, node_server_port)
-        self._node_server_url = f"http://localhost:{node_server_port}"
-        self._phone, self._password = phone, password
+        NodeEncryptor.__init__(self, username, password, self._js_file_path, node_exec_path=node_exec_path,
+                               node_server_port=node_server_port)
 
     def _pre_login(self):
         pre_login_time_start = int(time.time() * 1000)
@@ -109,7 +91,7 @@ class WeiboLoginVerifyCode(WeiboLogin):
         self.session.headers["Referer"] = "https://weibo.com/"
 
         response = self.session.get(
-            self._prelogin_url.format(base64.b64encode(self._phone.encode()), int(time.time() * 1000)))
+            self._prelogin_url.format(base64.b64encode(self._username.encode()), int(time.time() * 1000)))
 
         data = utils.jsoncallback_str2json(response.text)
 
@@ -123,11 +105,11 @@ class WeiboLoginVerifyCode(WeiboLogin):
         :param data:
         :return:
         """
-        enc_pwd = self.session.post(self._node_server_url,
+        enc_pwd = self.session.post(self._node_server.url,
                                     data={"password": self._password, "servertime": data["servertime"],
                                           "nonce": data["nonce"],
                                           "pubkey": data["pubkey"]}).text
-        self._login_form["su"] = base64.b64encode(self._phone.encode())
+        self._login_form["su"] = base64.b64encode(self._username.encode())
         self._login_form["sp"] = enc_pwd
         self._login_form["prelt"] = int(time.time()) - pre_login_time_start - data["exectime"]
         self._login_form["servertime"] = data["servertime"]
@@ -171,7 +153,7 @@ class WeiboLoginVerifyCode(WeiboLogin):
 
         return token, protection_url
 
-    def _do_login(self) -> bool:
+    def _do_login(self):
         self._node_server.run()
 
         try:
@@ -182,9 +164,6 @@ class WeiboLoginVerifyCode(WeiboLogin):
             encrypt_mobile = self._get_sms_code(protection_url, token)
             self._verify_code(encrypt_mobile, token)
             # TODO
-            return True
-        except Exception as e:
-            return False
         finally:
             self._node_server.stop()
 
@@ -297,7 +276,7 @@ class WeiboLoginScanQrCode(WeiboLogin):
 
         return alt
 
-    def _do_login(self) -> bool:
+    def _do_login(self) -> None:
         """
         :return: 是否登录成功
         """
@@ -321,14 +300,13 @@ class WeiboLoginScanQrCode(WeiboLogin):
 
         if self.is_login():
             self._logger.info(f"uid: {uid}, nickname: {nick}, 登录成功!")
-            return True
-        return False
+            raise LoginFailedException
 
 
 if __name__ == '__main__':
     # s = RedisSessionManager("18280484271")
-    session = WeiboLoginScanQrCode(session_manager=None, log_level=logging.DEBUG).login()
-    # session = WeiboLoginVerifyCode(log_level=logging.DEBUG).login()
+    # session = WeiboLoginScanQrCode(session_manager=None, log_level=logging.DEBUG).login()
+    session = WeiboLoginVerifyCode('1,', '2', log_level=logging.DEBUG)
     # session = requests.Session()
     # session.cookies.set("a", "b", domain="weibo.com")
     # session.cookies.set("a", "c", domain="zhihu.com")
