@@ -109,8 +109,7 @@ class NodeServer(object):
 
         os.environ.setdefault("crackLoginNodeServerPort", str(self._node_server_port))
         self._proc = subprocess.Popen([self._node_exec_path, self._js_path])
-        if self._proc.poll() is None:
-            self._logger.info(f"node server is running at http://localhost:{self._node_server_port}")
+        self._logger.info(f"try to start node server at {self.url}")
 
     def stop(self):
         if not self._proc:

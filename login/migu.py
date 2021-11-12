@@ -5,6 +5,7 @@
 """
 import logging
 import os
+import time
 from pathlib import Path
 
 from core import Login, NodeEncryptor, headers, PROJECT_DIR
@@ -42,9 +43,8 @@ class MiGuLoginByPassword(MiGuLogin, NodeEncryptor):
 
     def _do_login_internal(self):
         self.session.get(self._open_login_url)
-        self.session.post("https://passport.migu.cn/password/publickey")
         formdata = self.session.post(self._node_server.url,
-                                     data={"username": self._username, "password": self._password}).json()
+                                     data={"username": self._username, "password": self._password, "type": "1"}).json()
         formdata.update({"isAsync": "true", "sourceID": "100001",
                          "appType": 0,
                          "relayState": "", "captcha": "",
@@ -66,5 +66,63 @@ class MiGuLoginByPassword(MiGuLogin, NodeEncryptor):
             self._node_server.stop()
 
 
+class MiGuLoginVerifyCode(MiGuLoginByPassword):
+    def is_login(self) -> bool:
+        response = self.session.get(self._test_login_url, params={"sourceID": "208003"}, allow_redirects=False)
+        return response.status_code == 200
+
+    def __init__(self, phone, **kwargs):
+        super(MiGuLoginVerifyCode, self).__init__(phone, None, **kwargs)
+
+    def _initialize_http(self) -> None:
+        super(MiGuLoginVerifyCode, self)._initialize_http()
+        self._send_code_url = "https://passport.migu.cn/login/dynamicpassword"
+        self._verify_code_url = "https://passport.migu.cn/authn/dynamicpassword"
+
+    def _do_login_internal(self):
+        self.session.get(self._open_login_url)
+        self._send_code()
+        url, token = self._verify_code()
+        self.session.get(url, params={"token": token, "relayState": "", "callbackURL": "https://www.migu.cn/"})
+        if not self.is_login():
+            raise LoginFailedException
+
+    def _send_code(self):
+        params = self.session.post(self._node_server.url, data={"username": self._username, "type": "2"}).json()
+        params.update({"isAsync": "true", "sourceID": "208003",
+                       "captcha": "",
+                       "imgcodeType": 2, "_": int(time.time() * 1000)})
+        ret = self.session.get(self._send_code_url, params=params).json()
+        if ret['status'] != 2000:
+            self._logger.error(ret['message'])
+            raise LoginFailedException
+        self._logger.info("验证码已发送")
+
+    def _verify_code(self):
+        err_cnt = 1
+        while True:
+            code = input("请输入收到的验证码：")
+
+            form = self.session.post(self._node_server.url,
+                                     data={"username": self._username, "password": code, "type": "2"}).json()
+            form.update({"isAsync": "true", "sourceID": "208003",
+                         "captcha": "",
+                         "imgcodeType": 2, "securityCode": "2737", "appType": "0",
+                         "relayState": ""})
+            ret = self.session.post(self._verify_code_url, data=form).json()
+            if ret['status'] == 4005:
+                err_cnt += 1
+                self._logger.error(ret['message'])
+                if err_cnt == 3:
+                    break
+                continue
+
+            if ret['status'] == 2000:
+                self._logger.info("验证码输入正确")
+                redirect_url, token = ret['result']['redirectURL'], ret['result']['token']
+                return redirect_url, token
+
+
 if __name__ == '__main__':
-    MiGuLoginByPassword("18280484271", "Aa1029384756").login()
+    # MiGuLoginByPassword("18280484271", "Aa1029384756").login()
+    MiGuLoginVerifyCode("18280484271").login()
