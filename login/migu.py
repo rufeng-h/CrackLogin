@@ -124,5 +124,5 @@ class MiGuLoginVerifyCode(MiGuLoginByPassword):
 
 
 if __name__ == '__main__':
-    # MiGuLoginByPassword("18280484271", "Aa1029384756").login()
-    MiGuLoginVerifyCode("18280484271").login()
+    MiGuLoginByPassword("18280484271", "Aa1029384756").login()
+    # MiGuLoginVerifyCode("18280484271").login()

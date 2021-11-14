@@ -16,7 +16,7 @@ from scrapy import Selector
 
 import utils
 from core import Login, NodeEncryptor, headers, PROJECT_DIR
-from exceptions import UnexpectedResponseException, LoginFailedException
+from exceptions import LoginFailedException
 from manager import SessionManager
 
 
@@ -135,7 +135,7 @@ class WeiboLoginVerifyCode(WeiboLogin, NodeEncryptor):
 
         if ret['retcode'] != 20000000:
             self._logger.error(ret["msg"])
-            raise UnexpectedResponseException(res)
+            raise LoginFailedException
         self._logger.info("手机验证码发送成功")
         return encrypt_mobile
 
@@ -153,7 +153,7 @@ class WeiboLoginVerifyCode(WeiboLogin, NodeEncryptor):
 
         return token, protection_url
 
-    def _do_login(self):
+    def _do_login(self) -> None:
         self._node_server.run()
 
         try:
@@ -162,7 +162,11 @@ class WeiboLoginVerifyCode(WeiboLogin, NodeEncryptor):
             redirect_url = self._post_form(pre_login_time_start, data)
             token, protection_url = self._do_redirect(redirect_url)
             encrypt_mobile = self._get_sms_code(protection_url, token)
-            self._verify_code(encrypt_mobile, token)
+            redirect_url = self._verify_code(encrypt_mobile, token)
+
+            self._cross_domain()
+            self.session.cookies.pop("cross_origin_proto")
+            self.session.cookies.pop("login_sid_t")
             # TODO
         finally:
             self._node_server.stop()
@@ -197,8 +201,7 @@ class WeiboLoginVerifyCode(WeiboLogin, NodeEncryptor):
         self._send_code_url = "https://passport.weibo.com/protection/mobile/sendcode?token={}"
         self._confirm_code_url = "https://passport.weibo.com/protection/mobile/confirm?token={}"
 
-    def _verify_code(self, encrypt_mobile, token):
-        redirect_url = ''
+    def _verify_code(self, encrypt_mobile, token) -> str:
         while True:
             code = input("请输入收到的手机验证码：")
 
@@ -209,16 +212,7 @@ class WeiboLoginVerifyCode(WeiboLogin, NodeEncryptor):
                 self._logger.warning(ret['msg'])
                 continue
 
-            redirect_url = ret['data']["redirect_url"]
-            break
-
-        if not redirect_url:
-            self._logger.error("")
-
-        self._cross_domain()
-        self.session.cookies.pop("cross_origin_proto")
-        self.session.cookies.pop("login_sid_t")
-        return self.session
+            return ret['data']["redirect_url"]
 
 
 class WeiboLoginScanQrCode(WeiboLogin):
